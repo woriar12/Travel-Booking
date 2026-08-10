@@ -1,0 +1,246 @@
+{
+	"info": {
+		"_postman_id": "c1f7b889-tourist-app-api-collection",
+		"name": "Tourist Application APIs (Simple Mode)",
+		"description": "Postman collection to test Tourist Application Express backend endpoints with simplified open access.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:5000",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "0. Root Health Check",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Auth - 1. Register User",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"name\": \"Karthik Tourist\",\n  \"email\": \"karthik@example.com\",\n  \"password\": \"tourist123\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/api/auth/register",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"register"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Auth - 2. Login User",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"karthik@example.com\",\n  \"password\": \"tourist123\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/api/auth/login",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"login"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Auth - 3. Get All Registered Users / Profile",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/auth/profile",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"profile"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Destinations - 1. Get All Destinations",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/destinations",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"destinations"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Destinations - 2. Filter Destinations (Search)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/destinations?category=Hills&search=Ooty",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"destinations"
+					],
+					"query": [
+						{
+							"key": "category",
+							"value": "Hills"
+						},
+						{
+							"key": "search",
+							"value": "Ooty"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Destinations - 3. Get Destination By ID",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/destinations/1",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"destinations",
+						"1"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Destinations - 4. Add New Destination",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"name\": \"Kodaikanal Lake & Coaker Walk\",\n  \"location\": \"Dindigul, Tamil Nadu\",\n  \"category\": \"Hills & Nature\",\n  \"price\": 4500,\n  \"rating\": 4.7,\n  \"description\": \"Princess of Hill Stations with stunning star-shaped lake, vibrant pine forests and misty cliff walks.\",\n  \"duration\": \"3 Days / 2 Nights\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/api/destinations",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"destinations"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Bookings - 1. Create Tour Booking",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"destinationId\": \"1\",\n  \"userName\": \"Karthik Tourist\",\n  \"userEmail\": \"karthik@example.com\",\n  \"travelDate\": \"2026-09-15\",\n  \"numberOfGuests\": 2,\n  \"contactNumber\": \"+91 9876543210\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/api/bookings",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"bookings"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Bookings - 2. Get All Bookings",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/bookings",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"bookings"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
