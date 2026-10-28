@@ -123,13 +123,22 @@ app.use((req, res, next) => {
 app.use(errorHandler);
 
 // Start Server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n==================================================`);
-  console.log(`🌿 NatureTrails Server running on port: ${PORT}`);
+  console.log(`🌿 Server running on port ${PORT}`);
   console.log(`🌍 Base URL: http://localhost:${PORT}`);
   console.log(`🗄️ Database: MongoDB (naturetrails)`);
-  console.log(`🔐 Auth: Server Session (HttpOnly Cookie) — No JWT`);
+  console.log(`🔐 Auth: Server Session (HttpOnly Cookie) & JWT Token`);
   console.log(`==================================================\n`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ Port ${PORT} is already in use by another process.`);
+    console.error(`👉 Run 'npx kill-port ${PORT}' in your terminal to release the port, then restart the server.\n`);
+  } else {
+    console.error(`\n❌ Server failed to start: ${err.message}\n`);
+  }
 });
 
 module.exports = app;

@@ -1,0 +1,22 @@
+{
+  "watch": [
+    "server.js",
+    "config",
+    "controllers",
+    "middleware",
+    "models",
+    "routes",
+    ".env"
+  ],
+  "ext": "js,json,env",
+  "ignore": [
+    "node_modules",
+    "node_modules/*",
+    "../client",
+    "../client/*",
+    "*.log",
+    ".git",
+    "Tourist_App_Postman_Collection.json"
+  ],
+  "delay": "1500"
+}

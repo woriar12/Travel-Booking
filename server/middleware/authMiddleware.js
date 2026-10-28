@@ -1,9 +1,36 @@
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-// @desc    Middleware to verify logged-in user via server-side session (HttpOnly cookie)
+const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET || 'naturetrails_jwt_secret_key_2026';
+
+// Helper: extract userId from Session, JWT Bearer Token, or x-user-id header
+const extractUserId = (req) => {
+  if (req.session && req.session.userId) {
+    return req.session.userId;
+  }
+
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, JWT_SECRET);
+      return decoded.id;
+    } catch (err) {
+      // Invalid/expired token
+    }
+  }
+
+  if (req.headers['x-user-id']) {
+    return req.headers['x-user-id'];
+  }
+
+  return null;
+};
+
+// @desc    Middleware to verify logged-in user via Session, JWT Bearer token, or custom header
 const requireAuth = async (req, res, next) => {
   try {
-    const userId = req.session ? req.session.userId : null;
+    const userId = extractUserId(req);
 
     if (!userId) {
       return res.status(401).json({
@@ -14,14 +41,13 @@ const requireAuth = async (req, res, next) => {
 
     const user = await User.findById(userId).select('-password');
     if (!user) {
-      req.session.destroy();
+      if (req.session) req.session.destroy();
       return res.status(401).json({
         success: false,
         message: 'User session invalid. Please log in again.'
       });
     }
 
-    // Attach authenticated user to request
     req.currentUser = user;
     next();
   } catch (error) {
@@ -29,10 +55,10 @@ const requireAuth = async (req, res, next) => {
   }
 };
 
-// @desc    Middleware to verify logged-in user has ADMIN role via server session
+// @desc    Middleware to verify logged-in user has ADMIN role
 const requireAdmin = async (req, res, next) => {
   try {
-    const userId = req.session ? req.session.userId : null;
+    const userId = extractUserId(req);
 
     if (!userId) {
       return res.status(401).json({
@@ -43,14 +69,13 @@ const requireAdmin = async (req, res, next) => {
 
     const user = await User.findById(userId).select('-password');
     if (!user) {
-      req.session.destroy();
+      if (req.session) req.session.destroy();
       return res.status(401).json({
         success: false,
         message: 'User session invalid. Please log in again.'
       });
     }
 
-    // Server-side role check from database
     if (user.role !== 'ADMIN') {
       return res.status(403).json({
         success: false,

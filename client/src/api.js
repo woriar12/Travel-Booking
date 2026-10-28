@@ -10,6 +10,44 @@ const defaultOptions = (options = {}) => ({
   }
 });
 
+// Helper: safe response parser
+const parseResponse = async (res, defaultErrorMessage = 'Request failed') => {
+  let data = null;
+  const contentType = res.headers.get('content-type') || '';
+
+  if (contentType.includes('application/json')) {
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+  } else {
+    try {
+      const text = await res.text();
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { message: text };
+        }
+      }
+    } catch {
+      data = null;
+    }
+  }
+
+  if (!res.ok) {
+    const errorMsg =
+      data?.message ||
+      (res.status === 500 || res.status === 503
+        ? 'Backend server is not running on port 5000. Please start the backend server (cd server && npm run dev).'
+        : defaultErrorMessage);
+    throw new Error(errorMsg);
+  }
+
+  return data;
+};
+
 // Helper: get current user from localStorage
 const getCurrentUser = () => {
   try {
@@ -23,12 +61,14 @@ const getCurrentUser = () => {
 // Helper: build auth headers
 const authHeaders = () => {
   const user = getCurrentUser();
-  if (!user) return { 'Content-Type': 'application/json' };
-  return {
-    'Content-Type': 'application/json',
-    'x-user-id': user.id,
-    'x-user-role': user.role
-  };
+  const token = localStorage.getItem('travel_token');
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (user) {
+    headers['x-user-id'] = user.id;
+    headers['x-user-role'] = user.role;
+  }
+  return headers;
 };
 
 // =============================================
@@ -42,9 +82,7 @@ export const fetchDestinations = async (category = '', search = '') => {
     if (search) query.append('search', search);
 
     const res = await fetch(`${API_BASE}/destinations?${query.toString()}`, defaultOptions());
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to fetch destinations');
-    return data;
+    return await parseResponse(res, 'Failed to fetch destinations');
   } catch (err) {
     console.error('API Error (fetchDestinations):', err);
     throw err;
@@ -54,9 +92,7 @@ export const fetchDestinations = async (category = '', search = '') => {
 export const fetchDestinationById = async (id) => {
   try {
     const res = await fetch(`${API_BASE}/destinations/${id}`, defaultOptions());
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to fetch destination');
-    return data;
+    return await parseResponse(res, 'Failed to fetch destination');
   } catch (err) {
     console.error('API Error (fetchDestinationById):', err);
     throw err;
@@ -70,9 +106,7 @@ export const createDestination = async (destinationData) => {
       headers: authHeaders(),
       body: JSON.stringify(destinationData),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to create destination');
-    return data;
+    return await parseResponse(res, 'Failed to create destination');
   } catch (err) {
     console.error('API Error (createDestination):', err);
     throw err;
@@ -86,9 +120,7 @@ export const updateDestination = async (id, destinationData) => {
       headers: authHeaders(),
       body: JSON.stringify(destinationData),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to update destination');
-    return data;
+    return await parseResponse(res, 'Failed to update destination');
   } catch (err) {
     console.error('API Error (updateDestination):', err);
     throw err;
@@ -102,9 +134,7 @@ export const updateDestinationOffer = async (id, offerData) => {
       headers: authHeaders(),
       body: JSON.stringify(offerData),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to update destination offer');
-    return data;
+    return await parseResponse(res, 'Failed to update destination offer');
   } catch (err) {
     console.error('API Error (updateDestinationOffer):', err);
     throw err;
@@ -117,9 +147,7 @@ export const deleteDestination = async (id) => {
       method: 'DELETE',
       headers: authHeaders(),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to delete destination');
-    return data;
+    return await parseResponse(res, 'Failed to delete destination');
   } catch (err) {
     console.error('API Error (deleteDestination):', err);
     throw err;
@@ -137,9 +165,7 @@ export const createBooking = async (bookingData) => {
       headers: authHeaders(),
       body: JSON.stringify(bookingData),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to create booking');
-    return data;
+    return await parseResponse(res, 'Failed to create booking');
   } catch (err) {
     console.error('API Error (createBooking):', err);
     throw err;
@@ -149,9 +175,7 @@ export const createBooking = async (bookingData) => {
 export const fetchBookings = async () => {
   try {
     const res = await fetch(`${API_BASE}/bookings`, defaultOptions());
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to fetch bookings');
-    return data;
+    return await parseResponse(res, 'Failed to fetch bookings');
   } catch (err) {
     console.error('API Error (fetchBookings):', err);
     throw err;
@@ -163,9 +187,7 @@ export const fetchBookingStats = async () => {
     const res = await fetch(`${API_BASE}/bookings/stats`, defaultOptions({
       headers: authHeaders(),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to fetch booking stats');
-    return data;
+    return await parseResponse(res, 'Failed to fetch booking stats');
   } catch (err) {
     console.error('API Error (fetchBookingStats):', err);
     throw err;
@@ -179,9 +201,7 @@ export const updateBookingStatus = async (id, status) => {
       headers: authHeaders(),
       body: JSON.stringify({ status }),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to update booking status');
-    return data;
+    return await parseResponse(res, 'Failed to update booking status');
   } catch (err) {
     console.error('API Error (updateBookingStatus):', err);
     throw err;
@@ -198,8 +218,10 @@ export const registerUser = async (credentials) => {
       method: 'POST',
       body: JSON.stringify(credentials),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Registration failed');
+    const data = await parseResponse(res, 'Registration failed');
+    if (data?.token) {
+      localStorage.setItem('travel_token', data.token);
+    }
     return data;
   } catch (err) {
     console.error('API Error (registerUser):', err);
@@ -213,8 +235,10 @@ export const loginUser = async (credentials) => {
       method: 'POST',
       body: JSON.stringify(credentials),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Login failed');
+    const data = await parseResponse(res, 'Login failed');
+    if (data?.token) {
+      localStorage.setItem('travel_token', data.token);
+    }
     return data;
   } catch (err) {
     console.error('API Error (loginUser):', err);
@@ -224,11 +248,11 @@ export const loginUser = async (credentials) => {
 
 export const logoutUser = async () => {
   try {
+    localStorage.removeItem('travel_token');
     const res = await fetch(`${API_BASE}/auth/logout`, defaultOptions({
       method: 'POST'
     }));
-    const data = await res.json();
-    return data;
+    return await parseResponse(res, 'Logout failed');
   } catch (err) {
     console.error('API Error (logoutUser):', err);
   }
@@ -237,9 +261,7 @@ export const logoutUser = async () => {
 export const fetchMe = async () => {
   try {
     const res = await fetch(`${API_BASE}/auth/me`, defaultOptions());
-    const data = await res.json();
-    if (!res.ok) return null;
-    return data;
+    return await parseResponse(res, 'Failed to fetch session');
   } catch (err) {
     return null;
   }
@@ -250,9 +272,7 @@ export const fetchAllUsers = async () => {
     const res = await fetch(`${API_BASE}/auth/users`, defaultOptions({
       headers: authHeaders(),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to fetch users');
-    return data;
+    return await parseResponse(res, 'Failed to fetch users');
   } catch (err) {
     console.error('API Error (fetchAllUsers):', err);
     throw err;
@@ -266,9 +286,7 @@ export const fetchAllUsers = async () => {
 export const fetchOffers = async () => {
   try {
     const res = await fetch(`${API_BASE}/offers`, defaultOptions());
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to fetch offers');
-    return data;
+    return await parseResponse(res, 'Failed to fetch offers');
   } catch (err) {
     console.error('API Error (fetchOffers):', err);
     throw err;
@@ -282,9 +300,7 @@ export const createOffer = async (offerData) => {
       headers: authHeaders(),
       body: JSON.stringify(offerData),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to create offer');
-    return data;
+    return await parseResponse(res, 'Failed to create offer');
   } catch (err) {
     console.error('API Error (createOffer):', err);
     throw err;
@@ -297,9 +313,7 @@ export const validateOffer = async (code, totalAmount) => {
       method: 'POST',
       body: JSON.stringify({ code, totalAmount, bookingAmount: totalAmount }),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Invalid promo code');
-    return data;
+    return await parseResponse(res, 'Invalid promo code');
   } catch (err) {
     console.error('API Error (validateOffer):', err);
     throw err;
@@ -312,9 +326,7 @@ export const deleteOffer = async (id) => {
       method: 'DELETE',
       headers: authHeaders(),
     }));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to delete offer');
-    return data;
+    return await parseResponse(res, 'Failed to delete offer');
   } catch (err) {
     console.error('API Error (deleteOffer):', err);
     throw err;

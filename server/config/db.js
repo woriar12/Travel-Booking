@@ -1,25 +1,39 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+// Register Mongoose connection event listeners
+mongoose.connection.on('error', (err) => {
+  console.error(`❌ MongoDB connection error: ${err.message}`);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB disconnected.');
+});
+
 const connectDB = async () => {
   try {
     const primaryUri = process.env.MONGODB_URI;
     if (primaryUri) {
       try {
-        const conn = await mongoose.connect(primaryUri);
-        console.log(`\n🌿 MongoDB Connected (Cloud Atlas): ${conn.connection.host}/${conn.connection.name}`);
+        const conn = await mongoose.connect(primaryUri, {
+          serverSelectionTimeoutMS: 5000
+        });
+        console.log(`🌿 MongoDB connected successfully (Cloud Atlas: ${conn.connection.host})`);
         autoSeedIfEmpty();
         return;
       } catch (cloudErr) {
-        console.error(`\n⚠️ Cloud MongoDB Auth Failed (${cloudErr.message}). Falling back to local MongoDB...`);
+        console.error(`⚠️ Cloud MongoDB connection failed (${cloudErr.message}). Falling back to local MongoDB...`);
       }
     }
     
-    const localConn = await mongoose.connect('mongodb://127.0.0.1:27017/naturetrails');
-    console.log(`\n🌿 MongoDB Connected (Local): ${localConn.connection.host}/${localConn.connection.name}`);
+    const localConn = await mongoose.connect('mongodb://127.0.0.1:27017/naturetrails', {
+      serverSelectionTimeoutMS: 5000
+    });
+    console.log(`🌿 MongoDB connected successfully (Local: ${localConn.connection.host})`);
     autoSeedIfEmpty();
   } catch (error) {
-    console.error(`\n❌ MongoDB Connection Failed: ${error.message}`);
+    console.error(`❌ MongoDB connection failed: ${error.message}`);
+    console.error('👉 Ensure MongoDB is running locally on port 27017 or check your MONGODB_URI in server/.env');
   }
 };
 

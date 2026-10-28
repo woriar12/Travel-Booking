@@ -1,14 +1,28 @@
+const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 
+const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET || 'naturetrails_jwt_secret_key_2026';
+
 // Helper: safe user object (no password)
 const safeUser = (u) => ({
-  id: u._id || u.id,
+  id: u._id ? u._id.toString() : u.id,
+  _id: u._id ? u._id.toString() : u.id,
   name: u.name,
   email: u.email,
   role: u.role,
   createdAt: u.createdAt
 });
+
+// Helper: generate JWT Token
+const generateToken = (user) => {
+  const id = user._id ? user._id.toString() : user.id;
+  return jwt.sign(
+    { id, email: user.email, role: user.role },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+};
 
 // @desc    Register a new user
 // @route   POST /api/auth/register
@@ -46,9 +60,12 @@ const registerUser = async (req, res) => {
       req.session.role = newUser.role;
     }
 
+    const token = generateToken(newUser);
+
     res.status(201).json({
       success: true,
       message: 'Account created successfully! Welcome to NatureTrails.',
+      token,
       user: safeUser(newUser)
     });
   } catch (error) {
@@ -84,9 +101,12 @@ const loginUser = async (req, res) => {
       req.session.role = user.role;
     }
 
+    const token = generateToken(user);
+
     res.status(200).json({
       success: true,
       message: `Welcome back, ${user.name}!`,
+      token,
       user: safeUser(user)
     });
   } catch (error) {
@@ -103,10 +123,11 @@ const logoutUser = (req, res) => {
       if (err) {
         return res.status(500).json({ success: false, message: 'Logout failed' });
       }
-      res.clearCookie('connect.sid');
+      res.clearCookie('naturetrails_sid');
       return res.status(200).json({ success: true, message: 'Logged out successfully' });
     });
   } else {
+    res.clearCookie('naturetrails_sid');
     res.status(200).json({ success: true, message: 'Logged out successfully' });
   }
 };
@@ -116,11 +137,27 @@ const logoutUser = (req, res) => {
 // @access  Authenticated
 const getMe = async (req, res) => {
   try {
-    if (!req.session || !req.session.userId) {
+    let userId = req.session ? req.session.userId : null;
+
+    if (!userId && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userId = decoded.id;
+      } catch {
+        // invalid token
+      }
+    }
+
+    if (!userId && req.headers['x-user-id']) {
+      userId = req.headers['x-user-id'];
+    }
+
+    if (!userId) {
       return res.status(401).json({ success: false, message: 'Not authenticated' });
     }
 
-    const user = await User.findById(req.session.userId).select('-password');
+    const user = await User.findById(userId).select('-password');
     if (!user) {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
