@@ -6,8 +6,8 @@ const { requireAuth, requireAdmin } = require('../middleware/authMiddleware');
 // Protected: any logged-in user can create a booking
 router.post('/', requireAuth, createBooking);
 
-// Public: any user can view bookings (user sees their own bookings in UI)
-router.get('/', getUserBookings);
+// Protected: user gets their own bookings, admin gets all
+router.get('/', requireAuth, getUserBookings);
 
 // Admin-only
 router.get('/stats', requireAdmin, getBookingStats);

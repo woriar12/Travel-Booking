@@ -409,8 +409,11 @@ export default function App() {
       };
       const res = await createBooking(payload);
       if (res.success) {
-        addToast(`🎉 Tour booked! Booking ID: ${res.data.id}`, 'success');
+        addToast(`🎉 Tour booked! Booking ID: ${res.data?.id || 'Confirmed'}`, 'success');
         setBookingModalDest(null);
+        if (res.data) {
+          setBookingsList(prev => [res.data, ...prev.filter(b => b.id !== res.data.id)]);
+        }
         loadAllBookingsData();
       }
     } catch (err) {
@@ -509,9 +512,18 @@ export default function App() {
     return bookingsList.filter(b => b.status === bookingStatusFilter);
   };
 
-  // User's own bookings (by email)
+  // User's own bookings (by email or user ID - case insensitive)
   const myBookings = currentUser
-    ? bookingsList.filter(b => b.userEmail === currentUser.email)
+    ? bookingsList.filter(b => {
+        if (!b) return false;
+        const bEmail = (b.userEmail || '').toLowerCase().trim();
+        const cEmail = (currentUser.email || '').toLowerCase().trim();
+        if (bEmail && cEmail && bEmail === cEmail) return true;
+        const bUserId = b.user ? (b.user._id || b.user.id || b.user).toString() : null;
+        const cUserId = currentUser.id ? currentUser.id.toString() : (currentUser._id ? currentUser._id.toString() : null);
+        if (bUserId && cUserId && bUserId === cUserId) return true;
+        return false;
+      })
     : [];
 
   // =============================================
@@ -525,7 +537,7 @@ export default function App() {
   if (adminViews.includes(activeView) && !isAdmin) {
     return (
       <div>
-        <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} />
+        <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} setShowBookingsDrawer={setShowBookingsDrawer} />
         <div className="app-container">
           <div className="access-denied-page">
             <div className="access-denied-card">
@@ -609,7 +621,7 @@ export default function App() {
     return (
       <div style={{ background: 'var(--cream)', minHeight: '100vh' }}>
         {/* Admin Navbar */}
-        <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} />
+        <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} setShowBookingsDrawer={setShowBookingsDrawer} />
 
         <div className="admin-layout">
           {/* Sidebar */}
@@ -1068,7 +1080,7 @@ export default function App() {
   // =============================================
   return (
     <div style={{ background: 'var(--cream)', minHeight: '100vh' }}>
-      <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} />
+      <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} setShowBookingsDrawer={setShowBookingsDrawer} />
 
       <div className="app-container">
 
@@ -1496,7 +1508,7 @@ export default function App() {
 // SUB-COMPONENTS
 // =============================================
 
-function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin, handleLogout, isAdmin, loadAllBookingsData, loadOffersData }) {
+function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin, handleLogout, isAdmin, loadAllBookingsData, loadOffersData, setShowBookingsDrawer }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const closeMobile = () => setMobileOpen(false);
@@ -1524,7 +1536,7 @@ function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin
               <div className={`nav-item ${activeView === 'user-dashboard' ? 'active' : ''}`} onClick={() => navigate('user-dashboard')}>
                 <Home size={16}/> Dashboard
               </div>
-              <div className="nav-item" onClick={() => { loadAllBookingsData(); navigate('user-dashboard'); }}>
+              <div className="nav-item" onClick={() => { loadAllBookingsData(); navigate('user-dashboard'); if (setShowBookingsDrawer) setShowBookingsDrawer(true); }}>
                 <Briefcase size={16}/> My Bookings
               </div>
             </>
@@ -1621,7 +1633,7 @@ function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin
                     <Home size={19}/> My Dashboard
                   </div>
                   <div className="mobile-nav-item"
-                    onClick={() => handleNavClick(() => { loadAllBookingsData(); navigate('user-dashboard'); })}>
+                    onClick={() => handleNavClick(() => { loadAllBookingsData(); navigate('user-dashboard'); if (setShowBookingsDrawer) setShowBookingsDrawer(true); })}>
                     <Briefcase size={19}/> My Bookings
                   </div>
                 </>

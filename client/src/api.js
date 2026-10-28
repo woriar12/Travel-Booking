@@ -174,7 +174,9 @@ export const createBooking = async (bookingData) => {
 
 export const fetchBookings = async () => {
   try {
-    const res = await fetch(`${API_BASE}/bookings`, defaultOptions());
+    const res = await fetch(`${API_BASE}/bookings`, defaultOptions({
+      headers: authHeaders(),
+    }));
     return await parseResponse(res, 'Failed to fetch bookings');
   } catch (err) {
     console.error('API Error (fetchBookings):', err);

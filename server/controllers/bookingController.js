@@ -52,11 +52,12 @@ const createBooking = async (req, res) => {
 
     // Bind identity strictly from authenticated user session
     const bookingUser = req.currentUser;
+    const finalUserId = bookingUser ? (bookingUser._id || bookingUser.id) : null;
     const finalUserName = bookingUser ? bookingUser.name : (userName || 'Guest User');
-    const finalUserEmail = bookingUser ? bookingUser.email : (userEmail || 'guest@example.com');
+    const finalUserEmail = bookingUser ? bookingUser.email.toLowerCase().trim() : (userEmail ? userEmail.toLowerCase().trim() : 'guest@example.com');
 
     const newBooking = await Booking.create({
-      user: bookingUser ? bookingUser._id : null,
+      user: finalUserId,
       userName: finalUserName,
       userEmail: finalUserEmail,
       destination: destination._id,
@@ -102,13 +103,18 @@ const getUserBookings = async (req, res) => {
       });
     }
 
-    const userId = user ? user._id : req.session.userId;
+    const userId = user ? (user._id || user.id) : req.session.userId;
     const userRole = user ? user.role : req.session.role;
+    const userEmail = user ? (user.email || '').toLowerCase().trim() : '';
     let filter = {};
 
-    // Strict ownership: Normal USER sees ONLY their own bookings
+    // Strict ownership: Normal USER sees ONLY their own bookings (matched by userId OR email)
     if (userRole !== 'ADMIN') {
-      filter = { $or: [{ user: userId }] };
+      const orConditions = [{ user: userId }];
+      if (userEmail) {
+        orConditions.push({ userEmail: new RegExp(`^${userEmail}$`, 'i') });
+      }
+      filter = { $or: orConditions };
     }
 
     const bookings = await Booking.find(filter).populate('destination').sort({ bookedAt: -1 });
