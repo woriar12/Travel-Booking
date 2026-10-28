@@ -5,6 +5,7 @@ const Destination = require('../models/Destination');
 const mapBooking = (b) => ({
   id: b._id.toString(),
   _id: b._id.toString(),
+  user: b.user ? (b.user._id ? b.user._id.toString() : b.user.toString()) : null,
   userName: b.userName,
   userEmail: b.userEmail,
   destination: b.destinationDetails || (b.destination ? {
