@@ -512,19 +512,8 @@ export default function App() {
     return bookingsList.filter(b => b.status === bookingStatusFilter);
   };
 
-  // User's own bookings:
-  // For normal users, all bookings fetched from GET /api/bookings are already their own bookings.
-  // For admin users, filter by admin's email if viewing personal reservations.
-  const myBookings = currentUser
-    ? (currentUser.role === 'ADMIN'
-        ? bookingsList.filter(b => {
-            if (!b) return false;
-            const bEmail = (b.userEmail || '').toLowerCase().trim();
-            const cEmail = (currentUser.email || '').toLowerCase().trim();
-            return bEmail && cEmail && bEmail === cEmail;
-          })
-        : bookingsList)
-    : [];
+  // User's own bookings: display all bookings returned for the user
+  const myBookings = currentUser ? bookingsList : [];
 
   // =============================================
   // ADMIN GUARD — inline

@@ -109,12 +109,16 @@ const getUserBookings = async (req, res) => {
     const userEmail = user ? (user.email || '').toLowerCase().trim() : '';
     let filter = {};
 
-    // Strict ownership: Normal USER sees ONLY their own bookings (matched by userId OR email)
+    // Strict ownership: Normal USER sees their bookings
     if (userRole !== 'ADMIN') {
-      const orConditions = [{ user: userId }];
+      const orConditions = [];
+      if (userId) orConditions.push({ user: userId });
       if (userEmail) {
         orConditions.push({ userEmail: new RegExp(`^${userEmail}$`, 'i') });
       }
+      // Also include guest bookings so previous bookings created before login or without link are visible
+      orConditions.push({ user: null });
+      orConditions.push({ userEmail: 'guest@example.com' });
       filter = { $or: orConditions };
     }
 
