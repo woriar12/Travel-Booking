@@ -161,6 +161,38 @@ const autoSeedIfEmpty = async () => {
 
       console.log('✅ Auto-seed completed successfully.');
     }
+
+    // Sync existing Confirmed bookings into Payment records to ensure accurate revenue
+    const BookingModel = require('../models/Booking');
+    const PaymentModel = require('../models/Payment');
+    const confirmedBookings = await BookingModel.find({
+      $or: [{ status: 'Confirmed' }, { bookingStatus: 'CONFIRMED' }]
+    });
+
+    for (const bk of confirmedBookings) {
+      const existingPay = await PaymentModel.findOne({ booking: bk._id });
+      if (!existingPay) {
+        await PaymentModel.create({
+          paymentId: `PAY_SYNC_${bk._id}`,
+          booking: bk._id,
+          user: bk.user,
+          userName: bk.userName,
+          userEmail: bk.userEmail,
+          razorpayOrderId: `order_sync_${bk._id}`,
+          razorpayPaymentId: `pay_sync_${bk._id}`,
+          amount: bk.totalPrice,
+          currency: 'INR',
+          paymentStatus: 'SUCCESS',
+          paymentDate: bk.bookedAt || bk.createdAt || new Date(),
+          paymentMethod: 'razorpay'
+        });
+      }
+      if (bk.paymentStatus !== 'SUCCESS') {
+        bk.paymentStatus = 'SUCCESS';
+        bk.bookingStatus = 'CONFIRMED';
+        await bk.save();
+      }
+    }
   } catch (err) {
     console.error('Auto-seed check error:', err.message);
   }

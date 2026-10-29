@@ -26,7 +26,7 @@ const allowedOrigins = [
   process.env.CLIENT_URL
 ].filter(Boolean);
 
-// Enable CORS with credentials for session cookie transmission
+// Enable CORS with credentials for session cookie transmission & JWT headers
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
@@ -36,8 +36,11 @@ app.use(cors({
     }
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-user-role', 'x-requested-with', 'Accept', 'Origin'],
   exposedHeaders: ['set-cookie']
 }));
+app.options('*', cors());
 
 // Body Parsing & Cookie Parsing
 app.use(express.json());
@@ -92,8 +95,22 @@ app.get('/', (req, res) => {
       bookings: {
         create: 'POST /api/bookings [AUTH]',
         getAll: 'GET /api/bookings [USER/ADMIN]',
+        getById: 'GET /api/bookings/:id [AUTH]',
+        cancel: 'POST /api/bookings/:id/cancel [AUTH]',
+        policy: 'GET /api/bookings/policy',
         stats: 'GET /api/bookings/stats [ADMIN]',
         updateStatus: 'PATCH /api/bookings/:id/status [ADMIN]'
+      },
+      payments: {
+        createOrder: 'POST /api/payments/create-order [AUTH]',
+        verify: 'POST /api/payments/verify [AUTH]',
+        refundStatus: 'GET /api/payments/refund-status/:bookingId [AUTH]',
+        webhook: 'POST /api/payments/webhook'
+      },
+      admin: {
+        revenue: 'GET /api/admin/revenue [ADMIN]',
+        transactions: 'GET /api/admin/revenue/transactions [ADMIN]',
+        refunds: 'GET /api/admin/revenue/refunds [ADMIN]'
       },
       offers: {
         getAll: 'GET /api/offers',
@@ -109,6 +126,8 @@ app.get('/', (req, res) => {
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/destinations', require('./routes/destinationRoutes'));
 app.use('/api/bookings', require('./routes/bookingRoutes'));
+app.use('/api/payments', require('./routes/paymentRoutes'));
+app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/offers', require('./routes/offersRoutes'));
 
 // 404 Route Handler

@@ -39,7 +39,14 @@ import {
   BarChart2,
   Settings,
   ArrowRight,
-  TreePine
+  TreePine,
+  CreditCard,
+  RotateCcw,
+  Receipt,
+  CalendarRange,
+  AlertTriangle,
+  RefreshCw,
+  FileText
 } from 'lucide-react';
 import {
   fetchDestinations,
@@ -59,7 +66,16 @@ import {
   loginUser,
   logoutUser,
   fetchMe,
-  fetchAllUsers
+  fetchAllUsers,
+  createPaymentOrderApi,
+  verifyPaymentApi,
+  fetchCancellationPolicy,
+  fetchBookingById,
+  cancelBookingApi,
+  fetchRefundStatusApi,
+  fetchAdminRevenueApi,
+  fetchAdminTransactionsApi,
+  fetchAdminRefundsApi
 } from './api';
 
 const CATEGORIES = [
@@ -123,6 +139,37 @@ export default function App() {
   const [editPlaceModal, setEditPlaceModal] = useState(null);
   const [editOfferModal, setEditOfferModal] = useState(null);
   const [showBookingsDrawer, setShowBookingsDrawer] = useState(false);
+
+  // =============================================
+  // CANCELLATION & PAYMENT STATE
+  // =============================================
+  const [cancellingBooking, setCancellingBooking] = useState(null);
+  const [cancellationReason, setCancellationReason] = useState('Change of travel plans');
+  const [cancellationModalEstimate, setCancellationModalEstimate] = useState(null);
+  const [isSubmittingCancel, setIsSubmittingCancel] = useState(false);
+  const [paymentProcessingId, setPaymentProcessingId] = useState(null);
+
+  // =============================================
+  // ADMIN REVENUE ANALYTICS STATE
+  // =============================================
+  const [revenueFilter, setRevenueFilter] = useState('all');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [revenueKpis, setRevenueKpis] = useState({
+    grossRevenue: 0,
+    totalRefunds: 0,
+    netRevenue: 0,
+    successfulPayments: 0,
+    pendingPayments: 0,
+    failedPayments: 0,
+    cancelledBookings: 0,
+    refundedBookings: 0,
+    totalRefundPendingAmount: 0
+  });
+  const [revenueTransactions, setRevenueTransactions] = useState([]);
+  const [revenueRefunds, setRevenueRefunds] = useState([]);
+  const [revenueTab, setRevenueTab] = useState('kpis');
+  const [revenueLoading, setRevenueLoading] = useState(false);
 
   // =============================================
   // AUTH FORM STATE
@@ -228,16 +275,26 @@ export default function App() {
     if (!currentUser) return;
     try {
       const res = await fetchBookings();
-      if (res && res.success && res.data) setBookingsList(res.data);
-      if (currentUser?.role === 'ADMIN') {
-        const statsRes = await fetchBookingStats();
-        if (statsRes && statsRes.success && statsRes.data) setAdminBookingStats(statsRes.data);
+      if (res && res.success && Array.isArray(res.data)) {
+        setBookingsList(res.data);
       }
     } catch (err) {
       if (err.message?.includes('Authentication required') || err.message?.includes('Access denied')) {
         setCurrentUser(null);
         localStorage.removeItem(STORAGE_KEY);
         setActiveView('login');
+        return;
+      }
+    }
+
+    if (currentUser?.role === 'ADMIN') {
+      try {
+        const statsRes = await fetchBookingStats();
+        if (statsRes && statsRes.success && statsRes.data) {
+          setAdminBookingStats(statsRes.data);
+        }
+      } catch (err) {
+        console.error('Failed to load admin stats:', err);
       }
     }
   };
@@ -253,6 +310,42 @@ export default function App() {
         localStorage.removeItem(STORAGE_KEY);
         setActiveView('login');
       }
+    }
+  };
+
+  const loadAdminRevenueData = async (filterOverride, startOverride, endOverride) => {
+    if (!currentUser || currentUser.role !== 'ADMIN') return;
+    setRevenueLoading(true);
+    try {
+      const activeFilter = filterOverride !== undefined ? filterOverride : revenueFilter;
+      const start = startOverride !== undefined ? startOverride : customStartDate;
+      const end = endOverride !== undefined ? endOverride : customEndDate;
+
+      const params = { filter: activeFilter };
+      if (activeFilter === 'custom') {
+        if (start) params.startDate = start;
+        if (end) params.endDate = end;
+      }
+
+      const [revRes, txRes, refRes] = await Promise.all([
+        fetchAdminRevenueApi(params),
+        fetchAdminTransactionsApi(params),
+        fetchAdminRefundsApi(params)
+      ]);
+
+      if (revRes && revRes.success && revRes.data?.kpis) {
+        setRevenueKpis(revRes.data.kpis);
+      }
+      if (txRes && txRes.success && txRes.data) {
+        setRevenueTransactions(txRes.data);
+      }
+      if (refRes && refRes.success && refRes.data) {
+        setRevenueRefunds(refRes.data);
+      }
+    } catch (err) {
+      console.error('Failed to load admin revenue data:', err);
+    } finally {
+      setRevenueLoading(false);
     }
   };
 
@@ -286,8 +379,11 @@ export default function App() {
   }, [currentUser, activeView]);
 
   useEffect(() => {
-    if (currentUser?.role === 'ADMIN') loadUsersData();
-  }, [currentUser, activeView]);
+    if (currentUser?.role === 'ADMIN' && (activeView === 'admin-dashboard' || activeView === 'admin-revenue')) {
+      loadUsersData();
+      loadAdminRevenueData();
+    }
+  }, [currentUser, activeView, revenueFilter]);
 
   // Pre-fill booking form with logged-in user
   useEffect(() => {
@@ -393,6 +489,135 @@ export default function App() {
     } finally { setValidatingPromo(false); }
   };
 
+  const initiatePayment = async (booking) => {
+    const bookingId = booking.id || booking._id;
+    setPaymentProcessingId(bookingId);
+    try {
+      const orderData = await createPaymentOrderApi(bookingId);
+      if (!orderData || !orderData.orderId) {
+        throw new Error('Failed to create payment order');
+      }
+
+      const options = {
+        key: orderData.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency || 'INR',
+        name: 'NatureTrails 🌿',
+        description: `Tour Reservation - ${booking.destination?.name || 'Nature Experience'}`,
+        order_id: orderData.orderId,
+        prefill: {
+          name: booking.userName || currentUser?.name || 'Traveler',
+          email: booking.userEmail || currentUser?.email || 'user@example.com',
+          contact: booking.contactNumber || ''
+        },
+        theme: {
+          color: '#1B5E3C'
+        },
+        handler: async function (response) {
+          try {
+            const verifyRes = await verifyPaymentApi({
+              bookingId,
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature
+            });
+            if (verifyRes.success) {
+              addToast('🎉 Payment verified! Your tour booking is Confirmed.', 'success');
+              loadAllBookingsData();
+              if (currentUser?.role === 'ADMIN') loadAdminRevenueData();
+            }
+          } catch (verErr) {
+            addToast(verErr.message || 'Payment verification failed', 'error');
+            loadAllBookingsData();
+          } finally {
+            setPaymentProcessingId(null);
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            addToast('Payment cancelled. Your booking is saved in My Bookings (Pending Payment).', 'info');
+            setPaymentProcessingId(null);
+            loadAllBookingsData();
+          }
+        }
+      };
+
+      const isPlaceholderMockKey = !orderData.keyId || orderData.keyId === 'rzp_test_naturetrails2026' || orderData.isSimulated;
+
+      if (window.Razorpay && !isPlaceholderMockKey) {
+        const rzp = new window.Razorpay(options);
+        rzp.on('payment.failed', function (failRes) {
+          addToast(`Payment failed: ${failRes.error?.description || 'Transaction declined'}`, 'error');
+          setPaymentProcessingId(null);
+          loadAllBookingsData();
+        });
+        rzp.open();
+      } else {
+        const confirmSim = window.confirm(
+          `[Razorpay Gateway Simulation]\n\nConfirm payment of ₹${booking.totalPrice?.toLocaleString()} for "${booking.destination?.name || 'Tour'}"?`
+        );
+        if (confirmSim) {
+          const simVerify = await verifyPaymentApi({
+            bookingId,
+            razorpay_order_id: orderData.orderId,
+            razorpay_payment_id: `pay_simulated_${Date.now()}`,
+            razorpay_signature: 'simulated_valid_signature'
+          });
+          if (simVerify.success) {
+            addToast('🎉 Payment verified! Your tour booking is Confirmed.', 'success');
+            loadAllBookingsData();
+            if (currentUser?.role === 'ADMIN') loadAdminRevenueData();
+          }
+        } else {
+          addToast('Payment pending. You can complete payment anytime in My Bookings.', 'info');
+        }
+        setPaymentProcessingId(null);
+      }
+    } catch (err) {
+      addToast(err.message || 'Payment initiation failed', 'error');
+      setPaymentProcessingId(null);
+    }
+  };
+
+  const handleOpenCancelModal = async (booking) => {
+    setCancellingBooking(booking);
+    setCancellationReason('Change of travel plans');
+    setCancellationModalEstimate(null);
+    try {
+      const res = await fetchBookingById(booking.id || booking._id);
+      if (res && res.success && res.cancellationEstimate) {
+        setCancellationModalEstimate(res.cancellationEstimate);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleConfirmCancellation = async () => {
+    if (!cancellingBooking) return;
+    setIsSubmittingCancel(true);
+    try {
+      const bId = cancellingBooking.id || cancellingBooking._id;
+      const res = await cancelBookingApi(bId, cancellationReason);
+      if (res && res.success) {
+        const refundAmt = res.refundAmount || res.data?.refundAmount || 0;
+        const refundPct = res.refundPercentage || res.data?.refundPercentage || 0;
+        if (refundAmt > 0) {
+          addToast(`Booking cancelled. Refund of ₹${refundAmt.toLocaleString()} (${refundPct}%) initiated.`, 'success');
+        } else {
+          addToast('Booking cancelled. Per policy (within 72 hours), ₹0 refund applies.', 'info');
+        }
+        setCancellingBooking(null);
+        loadAllBookingsData();
+        if (currentUser?.role === 'ADMIN') loadAdminRevenueData();
+      }
+    } catch (err) {
+      addToast(err.message || 'Failed to cancel booking', 'error');
+    } finally {
+      setIsSubmittingCancel(false);
+    }
+  };
+
   const handleBookingSubmit = async (e) => {
     e.preventDefault();
     if (!bookingModalDest) return;
@@ -408,13 +633,12 @@ export default function App() {
         discountAmount: appliedOffer ? appliedOffer.discountAmount : 0
       };
       const res = await createBooking(payload);
-      if (res.success) {
-        addToast(`🎉 Tour booked! Booking ID: ${res.data?.id || 'Confirmed'}`, 'success');
+      if (res.success && res.data) {
+        addToast('Reservation created! Opening payment gateway...', 'success');
         setBookingModalDest(null);
-        if (res.data) {
-          setBookingsList(prev => [res.data, ...prev.filter(b => b.id !== res.data.id)]);
-        }
+        setBookingsList(prev => [res.data, ...prev.filter(b => b.id !== res.data.id)]);
         loadAllBookingsData();
+        initiatePayment(res.data);
       }
     } catch (err) {
       addToast(err.message || 'Failed to submit booking', 'error');
@@ -509,7 +733,10 @@ export default function App() {
 
   const getFilteredBookings = () => {
     if (bookingStatusFilter === 'All') return bookingsList;
-    return bookingsList.filter(b => b.status === bookingStatusFilter);
+    return bookingsList.filter(b => 
+      (b.status && b.status.toLowerCase() === bookingStatusFilter.toLowerCase()) ||
+      (b.bookingStatus && b.bookingStatus.toLowerCase() === bookingStatusFilter.toLowerCase())
+    );
   };
 
   // User's own bookings: display all bookings returned for the user
@@ -522,11 +749,11 @@ export default function App() {
   const isLoggedIn = !!currentUser;
 
   // If visiting admin view without being admin → redirect
-  const adminViews = ['admin-dashboard', 'admin-bookings', 'admin-places', 'admin-offers', 'admin-users'];
+  const adminViews = ['admin-dashboard', 'admin-revenue', 'admin-bookings', 'admin-places', 'admin-offers', 'admin-users'];
   if (adminViews.includes(activeView) && !isAdmin) {
     return (
       <div>
-        <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} setShowBookingsDrawer={setShowBookingsDrawer} />
+        <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} setShowBookingsDrawer={setShowBookingsDrawer} loadAdminRevenueData={loadAdminRevenueData} loadUsersData={loadUsersData} />
         <div className="app-container">
           <div className="access-denied-page">
             <div className="access-denied-card">
@@ -608,47 +835,55 @@ export default function App() {
   // =============================================
   if (adminViews.includes(activeView)) {
     return (
-      <div style={{ background: 'var(--cream)', minHeight: '100vh' }}>
+      <div className="admin-page-wrapper">
         {/* Admin Navbar */}
-        <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} setShowBookingsDrawer={setShowBookingsDrawer} />
+        <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} setShowBookingsDrawer={setShowBookingsDrawer} loadAdminRevenueData={loadAdminRevenueData} loadUsersData={loadUsersData} />
 
         <div className="admin-layout">
           {/* Sidebar */}
           <aside className="admin-sidebar">
-            <div className="admin-sidebar-title">Main</div>
-            <div className={`admin-sidebar-item ${activeView === 'admin-dashboard' ? 'active' : ''}`}
-              onClick={() => navigate('admin-dashboard')}>
-              <LayoutDashboard size={18} /> Dashboard
+            <div className="admin-sidebar-nav">
+              <div className="admin-sidebar-title">Main</div>
+              <div className={`admin-sidebar-item ${activeView === 'admin-dashboard' ? 'active' : ''}`}
+                onClick={() => navigate('admin-dashboard')}>
+                <LayoutDashboard size={18} /> Dashboard
+              </div>
+
+              <div className="admin-sidebar-title">Management</div>
+              <div className={`admin-sidebar-item ${activeView === 'admin-users' ? 'active' : ''}`}
+                onClick={() => { navigate('admin-users'); loadUsersData(); }}>
+                <Users size={18} /> Users
+                {usersList.length > 0 && <span className="admin-sidebar-badge">{usersList.length}</span>}
+              </div>
+              <div className={`admin-sidebar-item ${activeView === 'admin-places' ? 'active' : ''}`}
+                onClick={() => navigate('admin-places')}>
+                <MapPin size={18} /> Destinations
+                {destinations.length > 0 && <span className="admin-sidebar-badge">{destinations.length}</span>}
+              </div>
+              <div className={`admin-sidebar-item ${activeView === 'admin-bookings' ? 'active' : ''}`}
+                onClick={() => { navigate('admin-bookings'); loadAllBookingsData(); }}>
+                <Briefcase size={18} /> Bookings
+                {bookingsList.length > 0 && <span className="admin-sidebar-badge">{bookingsList.length}</span>}
+              </div>
+              <div className={`admin-sidebar-item ${activeView === 'admin-revenue' ? 'active' : ''}`}
+                onClick={() => { navigate('admin-revenue'); loadAdminRevenueData(); }}>
+                <TrendingUp size={18} /> Revenue Analytics
+              </div>
+              <div className={`admin-sidebar-item ${activeView === 'admin-offers' ? 'active' : ''}`}
+                onClick={() => { navigate('admin-offers'); loadOffersData(); }}>
+                <Tag size={18} /> Promo Offers
+                {offersList.length > 0 && <span className="admin-sidebar-badge">{offersList.length}</span>}
+              </div>
             </div>
 
-            <div className="admin-sidebar-title">Management</div>
-            <div className={`admin-sidebar-item ${activeView === 'admin-users' ? 'active' : ''}`}
-              onClick={() => { navigate('admin-users'); loadUsersData(); }}>
-              <Users size={18} /> Users
-              {usersList.length > 0 && <span className="admin-sidebar-badge">{usersList.length}</span>}
-            </div>
-            <div className={`admin-sidebar-item ${activeView === 'admin-places' ? 'active' : ''}`}
-              onClick={() => navigate('admin-places')}>
-              <MapPin size={18} /> Destinations
-              {destinations.length > 0 && <span className="admin-sidebar-badge">{destinations.length}</span>}
-            </div>
-            <div className={`admin-sidebar-item ${activeView === 'admin-bookings' ? 'active' : ''}`}
-              onClick={() => { navigate('admin-bookings'); loadAllBookingsData(); }}>
-              <Briefcase size={18} /> Bookings
-              {bookingsList.length > 0 && <span className="admin-sidebar-badge">{bookingsList.length}</span>}
-            </div>
-            <div className={`admin-sidebar-item ${activeView === 'admin-offers' ? 'active' : ''}`}
-              onClick={() => { navigate('admin-offers'); loadOffersData(); }}>
-              <Tag size={18} /> Promo Offers
-              {offersList.length > 0 && <span className="admin-sidebar-badge">{offersList.length}</span>}
-            </div>
-
-            <div className="admin-sidebar-title">Account</div>
-            <div className="admin-sidebar-item" onClick={() => navigate('explore')}>
-              <Globe size={18} /> View Site
-            </div>
-            <div className="admin-sidebar-item" onClick={handleLogout} style={{ color: 'var(--error)', marginTop: 'auto' }}>
-              <LogOut size={18} /> Logout
+            <div className="admin-sidebar-footer">
+              <div className="admin-sidebar-title">Account</div>
+              <div className="admin-sidebar-item" onClick={() => navigate('explore')}>
+                <Globe size={18} /> View Site
+              </div>
+              <div className="admin-sidebar-item admin-logout-item" onClick={handleLogout}>
+                <LogOut size={18} /> Logout
+              </div>
             </div>
           </aside>
 
@@ -692,15 +927,32 @@ export default function App() {
                       <div className="metric-subtext">Confirmed & active tours</div>
                     </div>
                   </div>
-                  <div className="metric-card">
+                  <div className="metric-card" onClick={() => navigate('admin-revenue')} style={{ cursor: 'pointer' }}>
                     <div className="metric-icon-box bg-cream"><DollarSign size={24} /></div>
                     <div>
-                      <div className="metric-label">Total Revenue</div>
-                      <div className="metric-value">₹{(adminBookingStats.totalRevenue || 0).toLocaleString()}</div>
-                      <div className="metric-subtext">From reservations</div>
+                      <div className="metric-label">Net Revenue</div>
+                      <div className="metric-value">₹{(revenueKpis.netRevenue || 0).toLocaleString()}</div>
+                      <div className="metric-subtext">Gross ₹{(revenueKpis.grossRevenue || 0).toLocaleString()} − Refunds ₹{(revenueKpis.totalRefunds || 0).toLocaleString()}</div>
                     </div>
                   </div>
                 </div>
+
+                {/* Real-time Revenue & Refund Analytics Component */}
+                <AdminRevenueSection
+                  revenueFilter={revenueFilter}
+                  setRevenueFilter={setRevenueFilter}
+                  customStartDate={customStartDate}
+                  setCustomStartDate={setCustomStartDate}
+                  customEndDate={customEndDate}
+                  setCustomEndDate={setCustomEndDate}
+                  revenueKpis={revenueKpis}
+                  revenueTransactions={revenueTransactions}
+                  revenueRefunds={revenueRefunds}
+                  revenueTab={revenueTab}
+                  setRevenueTab={setRevenueTab}
+                  revenueLoading={revenueLoading}
+                  loadAdminRevenueData={loadAdminRevenueData}
+                />
 
                 {/* Quick Links */}
                 <div className="admin-section">
@@ -710,18 +962,18 @@ export default function App() {
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '3px' }}>Common management tasks</p>
                     </div>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                  <div className="admin-quick-actions-grid">
                     {[
-                      { icon: <PlusCircle size={18}/>, label: 'Add Destination', sub: 'Create new travel spot', action: () => setShowAddModal(true) },
-                      { icon: <Users size={18}/>, label: 'Manage Users', sub: 'View all registered users', action: () => { navigate('admin-users'); loadUsersData(); } },
-                      { icon: <Briefcase size={18}/>, label: 'View Bookings', sub: 'Monitor all reservations', action: () => { navigate('admin-bookings'); loadAllBookingsData(); } },
-                      { icon: <Tag size={18}/>, label: 'Manage Offers', sub: 'Create & manage coupons', action: () => { navigate('admin-offers'); loadOffersData(); } },
+                      { icon: <PlusCircle size={20}/>, label: 'Add Destination', sub: 'Create new travel spot', action: () => setShowAddModal(true) },
+                      { icon: <Users size={20}/>, label: 'Manage Users', sub: 'View all registered users', action: () => { navigate('admin-users'); loadUsersData(); } },
+                      { icon: <Briefcase size={20}/>, label: 'View Bookings', sub: 'Monitor all reservations', action: () => { navigate('admin-bookings'); loadAllBookingsData(); } },
+                      { icon: <Tag size={20}/>, label: 'Manage Offers', sub: 'Create & manage coupons', action: () => { navigate('admin-offers'); loadOffersData(); } },
                     ].map((qa, i) => (
-                      <div key={i} className="quick-action-card" onClick={qa.action}>
-                        <div className="quick-action-icon">{qa.icon}</div>
-                        <div>
-                          <div className="quick-action-label">{qa.label}</div>
-                          <div className="quick-action-sub">{qa.sub}</div>
+                      <div key={i} className="admin-quick-action-card" onClick={qa.action}>
+                        <div className="admin-quick-action-icon">{qa.icon}</div>
+                        <div className="admin-quick-action-text">
+                          <div className="admin-quick-action-label">{qa.label}</div>
+                          <div className="admin-quick-action-sub">{qa.sub}</div>
                         </div>
                       </div>
                     ))}
@@ -745,16 +997,16 @@ export default function App() {
                       <p>No bookings yet.</p>
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div className="admin-recent-bookings-list">
                       {[...bookingsList].reverse().slice(0, 5).map(b => (
-                        <div key={b.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', background: 'var(--cream)', borderRadius: 'var(--radius-sm)', gap: '12px', flexWrap: 'wrap' }}>
-                          <div>
-                            <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: '0.9rem' }}>{b.destination?.name}</div>
-                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{b.userName} · {b.travelDate}</div>
+                        <div key={b.id} className="admin-recent-booking-item">
+                          <div className="admin-recent-booking-info">
+                            <div className="admin-recent-booking-title">{b.destination?.name || 'Tour Destination'}</div>
+                            <div className="admin-recent-booking-meta">{b.userName} · {b.travelDate} · {b.numberOfGuests || 1} guest(s)</div>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-                            <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, color: 'var(--primary)' }}>₹{b.totalPrice?.toLocaleString()}</span>
-                            <span className={`status-badge status-${(b.status || 'confirmed').toLowerCase()}`}>{b.status}</span>
+                          <div className="admin-recent-booking-amount-col">
+                            <span className="admin-recent-booking-price">₹{b.totalPrice?.toLocaleString()}</span>
+                            <span className={`status-badge status-${(b.status || 'confirmed').toLowerCase()}`}>{b.status || 'Confirmed'}</span>
                           </div>
                         </div>
                       ))}
@@ -764,9 +1016,35 @@ export default function App() {
               </div>
             )}
 
+            {/* ADMIN REVENUE ANALYTICS VIEW */}
+            {activeView === 'admin-revenue' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                <div className="admin-page-header">
+                  <div className="admin-page-eyebrow"><TrendingUp size={14} /> Financial Intelligence</div>
+                  <h1 className="admin-page-title">Revenue & Refund Analytics</h1>
+                  <p className="admin-page-subtitle">Verified Razorpay payments, customer refund audits, and date-filtered revenue metrics.</p>
+                </div>
+                <AdminRevenueSection
+                  revenueFilter={revenueFilter}
+                  setRevenueFilter={setRevenueFilter}
+                  customStartDate={customStartDate}
+                  setCustomStartDate={setCustomStartDate}
+                  customEndDate={customEndDate}
+                  setCustomEndDate={setCustomEndDate}
+                  revenueKpis={revenueKpis}
+                  revenueTransactions={revenueTransactions}
+                  revenueRefunds={revenueRefunds}
+                  revenueTab={revenueTab}
+                  setRevenueTab={setRevenueTab}
+                  revenueLoading={revenueLoading}
+                  loadAdminRevenueData={loadAdminRevenueData}
+                />
+              </div>
+            )}
+
             {/* ADMIN USERS */}
             {activeView === 'admin-users' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div className="admin-container">
                 <div className="admin-page-header">
                   <div className="admin-page-eyebrow"><Users size={14} /> User Management</div>
                   <h1 className="admin-page-title">Registered Users</h1>
@@ -800,16 +1078,16 @@ export default function App() {
 
             {/* ADMIN BOOKINGS */}
             {activeView === 'admin-bookings' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div className="admin-container">
                 <div className="admin-page-header">
                   <div className="admin-page-eyebrow"><Briefcase size={14}/> Booking Management</div>
                   <h1 className="admin-page-title">All Tour Bookings</h1>
                   <p className="admin-page-subtitle">Track and manage all customer reservations</p>
                 </div>
 
-                <div className="admin-metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+                <div className="admin-metrics-grid">
                   {[
-                    { label: 'Total', value: bookingsList.length, cls: 'bg-forest' },
+                    { label: 'Total', value: adminBookingStats.totalBookings || bookingsList.length, cls: 'bg-forest' },
                     { label: 'Confirmed', value: adminBookingStats.statusCounts?.Confirmed || 0, cls: 'bg-sage' },
                     { label: 'Completed', value: adminBookingStats.statusCounts?.Completed || 0, cls: 'bg-sand' },
                     { label: 'Cancelled', value: adminBookingStats.statusCounts?.Cancelled || 0, cls: 'bg-cream' },
@@ -893,7 +1171,7 @@ export default function App() {
 
             {/* ADMIN PLACES */}
             {activeView === 'admin-places' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div className="admin-container">
                 <div className="admin-page-header">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '14px' }}>
                     <div>
@@ -961,7 +1239,7 @@ export default function App() {
 
             {/* ADMIN OFFERS */}
             {activeView === 'admin-offers' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div className="admin-container">
                 <div className="admin-page-header">
                   <div className="admin-page-eyebrow"><Tag size={14}/> Promo Management</div>
                   <h1 className="admin-page-title">Promo Coupons & Discounts</h1>
@@ -1069,7 +1347,7 @@ export default function App() {
   // =============================================
   return (
     <div style={{ background: 'var(--cream)', minHeight: '100vh' }}>
-      <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} setShowBookingsDrawer={setShowBookingsDrawer} />
+      <NavBar currentUser={currentUser} activeView={activeView} navigate={navigate} navigateUser={navigateUser} navigateAdmin={navigateAdmin} handleLogout={handleLogout} isAdmin={isAdmin} loadAllBookingsData={loadAllBookingsData} loadOffersData={loadOffersData} setShowBookingsDrawer={setShowBookingsDrawer} loadAdminRevenueData={loadAdminRevenueData} loadUsersData={loadUsersData} />
 
       <div className="app-container">
 
@@ -1167,7 +1445,7 @@ export default function App() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {myBookings.slice(0, 4).map(bk => (
-                    <div key={bk.id} className="recent-booking-card">
+                    <div key={bk.id} className="recent-booking-card" style={{ cursor: 'pointer' }} onClick={() => { loadAllBookingsData(); setShowBookingsDrawer(true); }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1 }}>
                         <div style={{ width: '52px', height: '52px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', flexShrink: 0 }}>
                           <img src={destinations.find(d => d.name === bk.destination?.name)?.image || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=100'}
@@ -1180,9 +1458,11 @@ export default function App() {
                           </div>
                         </div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
                         <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, color: 'var(--primary)' }}>₹{bk.totalPrice?.toLocaleString()}</span>
-                        <span className={`status-badge status-${(bk.status || 'confirmed').toLowerCase()}`}>{bk.status}</span>
+                        <span className={`status-badge status-${(bk.bookingStatus || bk.status || 'confirmed').toLowerCase().replace(' ', '_')}`}>
+                          {bk.bookingStatus || bk.status}
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -1453,25 +1733,205 @@ export default function App() {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '60vh', overflowY: 'auto' }}>
-                {myBookings.map(bk => (
-                  <div key={bk.id} style={{ background: 'var(--cream)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', padding: '18px 20px', borderLeft: `4px solid ${bk.status === 'Cancelled' ? 'var(--error)' : bk.status === 'Completed' ? 'var(--info)' : 'var(--primary)'}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--primary)' }}>{bk.id}</span>
-                      <span className={`status-badge status-${(bk.status || 'confirmed').toLowerCase()}`}>{bk.status}</span>
+                {myBookings.map(bk => {
+                  const isCancelled = bk.bookingStatus === 'CANCELLED' || bk.status === 'Cancelled';
+                  const isCompleted = bk.bookingStatus === 'COMPLETED' || bk.status === 'Completed';
+                  const isPending = bk.bookingStatus === 'PENDING_PAYMENT' || bk.paymentStatus === 'PENDING';
+                  const canCancel = !isCancelled && !isCompleted;
+
+                  return (
+                    <div key={bk.id} style={{ background: 'var(--cream)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', padding: '18px 20px', borderLeft: `4px solid ${isCancelled ? 'var(--error)' : isPending ? '#B8860B' : isCompleted ? 'var(--info)' : 'var(--primary)'}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--primary)' }}>REF: {bk.id}</span>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <span className={`status-badge status-${(bk.bookingStatus || bk.status || 'confirmed').toLowerCase().replace(' ', '_')}`}>
+                            {bk.bookingStatus || bk.status}
+                          </span>
+                          <span className={`status-badge status-${(bk.paymentStatus || 'pending').toLowerCase()}`}>
+                            Payment: {bk.paymentStatus || 'PENDING'}
+                          </span>
+                          {isCancelled && bk.refundStatus && bk.refundStatus !== 'NOT_APPLICABLE' && (
+                            <span className={`status-badge status-${bk.refundStatus.toLowerCase()}`}>
+                              Refund: {bk.refundStatus}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.1rem', marginBottom: '4px' }}>{bk.destination?.name}</h3>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '0.83rem', marginBottom: '12px' }}>
+                        <MapPin size={12} style={{ display: 'inline', marginRight: '3px' }}/>{bk.destination?.location}
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '8px', fontSize: '0.82rem', background: 'white', padding: '12px', borderRadius: 'var(--radius-sm)', marginBottom: '12px' }}>
+                        <div><span style={{ color: 'var(--text-light)', display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Travel Date</span><strong>{bk.travelDate}</strong></div>
+                        <div><span style={{ color: 'var(--text-light)', display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Guests</span><strong>{bk.numberOfGuests} Person(s)</strong></div>
+                        <div><span style={{ color: 'var(--text-light)', display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Amount</span><strong style={{ color: 'var(--primary)' }}>₹{bk.totalPrice?.toLocaleString()}</strong></div>
+                      </div>
+
+                      {/* Cancellation / Refund Summary if cancelled */}
+                      {isCancelled && (
+                        <div style={{ background: 'var(--error-bg)', border: '1px solid #F5C6CB', borderRadius: 'var(--radius-xs)', padding: '10px 14px', marginBottom: '12px', fontSize: '0.82rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                            <span style={{ color: 'var(--error)', fontWeight: 700 }}>Cancelled Reservation</span>
+                            <span style={{ color: 'var(--text-muted)' }}>{bk.cancellationDate ? new Date(bk.cancellationDate).toLocaleDateString() : ''}</span>
+                          </div>
+                          {bk.cancellationReason && (
+                            <div style={{ color: 'var(--text-medium)', marginBottom: '4px' }}>
+                              <strong>Reason:</strong> {bk.cancellationReason}
+                            </div>
+                          )}
+                          {bk.refundAmount > 0 ? (
+                            <div style={{ color: 'var(--success)', fontWeight: 700 }}>
+                              ✓ Refund Amount: ₹{bk.refundAmount.toLocaleString()} ({bk.refundPercentage || 0}% policy applied) — Status: {bk.refundStatus}
+                            </div>
+                          ) : (
+                            <div style={{ color: 'var(--text-muted)' }}>
+                              Non-refundable as per policy (cancelled within 72 hours of travel).
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', alignItems: 'center' }}>
+                        {isPending && (
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ padding: '8px 16px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                            disabled={paymentProcessingId === bk.id}
+                            onClick={() => initiatePayment(bk)}
+                          >
+                            <CreditCard size={14} />
+                            {paymentProcessingId === bk.id ? 'Connecting Gateway...' : 'Pay Now (Razorpay)'}
+                          </button>
+                        )}
+
+                        {canCancel && (
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ padding: '8px 14px', fontSize: '0.82rem', color: 'var(--error)', borderColor: 'var(--error)' }}
+                            onClick={() => handleOpenCancelModal(bk)}
+                          >
+                            <RotateCcw size={13} style={{ display: 'inline', marginRight: '4px' }} />
+                            Cancel Booking
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.1rem', marginBottom: '4px' }}>{bk.destination?.name}</h3>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '0.83rem', marginBottom: '12px' }}>
-                      <MapPin size={12} style={{ display: 'inline', marginRight: '3px' }}/>{bk.destination?.location}
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '8px', fontSize: '0.82rem', background: 'white', padding: '12px', borderRadius: 'var(--radius-sm)' }}>
-                      <div><span style={{ color: 'var(--text-light)', display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Date</span><strong>{bk.travelDate}</strong></div>
-                      <div><span style={{ color: 'var(--text-light)', display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Guests</span><strong>{bk.numberOfGuests} Person(s)</strong></div>
-                      <div><span style={{ color: 'var(--text-light)', display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Paid</span><strong style={{ color: 'var(--primary)' }}>₹{bk.totalPrice?.toLocaleString()}</strong></div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Cancellation Confirmation Modal */}
+      {cancellingBooking && (
+        <div className="modal-overlay" onClick={() => !isSubmittingCancel && setCancellingBooking(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '580px' }}>
+            <button className="modal-close-btn" disabled={isSubmittingCancel} onClick={() => setCancellingBooking(null)}><X size={17}/></button>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--error)', marginBottom: '6px' }}>
+                <AlertTriangle size={22} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cancellation Request</span>
+              </div>
+              <h2 className="modal-title">Cancel Tour Booking</h2>
+              <p className="modal-subtitle">Booking Ref: <strong>{cancellingBooking.id || cancellingBooking._id}</strong></p>
+            </div>
+
+            <div style={{ background: 'var(--cream)', padding: '16px', borderRadius: 'var(--radius-sm)', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Destination:</span>
+                <strong>{cancellingBooking.destination?.name || 'Tour Package'}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Travel Date:</span>
+                <strong>{cancellingBooking.travelDate}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Total Amount Paid:</span>
+                <strong style={{ color: 'var(--primary)' }}>₹{cancellingBooking.totalPrice?.toLocaleString()}</strong>
+              </div>
+            </div>
+
+            {/* Cancellation Policy Engine Visualizer */}
+            <div className="policy-card">
+              <div style={{ fontWeight: 700, fontSize: '0.88rem', marginBottom: '10px', color: 'var(--charcoal)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FileText size={16} /> Cancellation & Refund Policy
+              </div>
+              <div className={`policy-tier-row ${cancellationModalEstimate?.refundPercentage === 90 ? 'active' : ''}`}>
+                <span>7 or more days before trip:</span>
+                <strong>90% Refund</strong>
+              </div>
+              <div className={`policy-tier-row ${cancellationModalEstimate?.refundPercentage === 50 ? 'active' : ''}`}>
+                <span>3 to 6 days before trip:</span>
+                <strong>50% Refund</strong>
+              </div>
+              <div className={`policy-tier-row ${cancellationModalEstimate?.refundPercentage === 0 ? 'active' : ''}`}>
+                <span>Within 72 hours of trip:</span>
+                <strong>No Refund (0%)</strong>
+              </div>
+
+              {cancellationModalEstimate && (
+                <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                      {cancellationModalEstimate.daysBeforeTrip} days ({cancellationModalEstimate.hoursBeforeTrip} hrs) before trip
+                    </div>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--primary)' }}>
+                      {cancellationModalEstimate.policyApplied}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Estimated Refund</div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 800, color: cancellationModalEstimate.refundAmount > 0 ? 'var(--success)' : 'var(--error)' }}>
+                      ₹{cancellationModalEstimate.refundAmount.toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="form-group" style={{ marginTop: '14px' }}>
+              <label className="form-label">Reason for Cancellation</label>
+              <select
+                className="input-field"
+                value={cancellationReason}
+                onChange={e => setCancellationReason(e.target.value)}
+              >
+                <option value="Change of travel plans">Change of travel plans</option>
+                <option value="Personal emergency">Personal emergency</option>
+                <option value="Medical / Health reason">Medical / Health reason</option>
+                <option value="Work / Schedule conflict">Work / Schedule conflict</option>
+                <option value="Found alternative arrangement">Found alternative arrangement</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ flex: 1, justifyContent: 'center' }}
+                disabled={isSubmittingCancel}
+                onClick={() => setCancellingBooking(null)}
+              >
+                Keep Reservation
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ flex: 1, justifyContent: 'center', background: 'var(--error)', borderColor: 'var(--error)' }}
+                disabled={isSubmittingCancel}
+                onClick={handleConfirmCancellation}
+              >
+                {isSubmittingCancel ? 'Processing...' : 'Confirm Cancellation'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1497,7 +1957,7 @@ export default function App() {
 // SUB-COMPONENTS
 // =============================================
 
-function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin, handleLogout, isAdmin, loadAllBookingsData, loadOffersData, setShowBookingsDrawer }) {
+function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin, handleLogout, isAdmin, loadAllBookingsData, loadOffersData, setShowBookingsDrawer, loadAdminRevenueData, loadUsersData }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const closeMobile = () => setMobileOpen(false);
@@ -1535,7 +1995,7 @@ function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin
               <div className={`nav-item admin-nav-btn ${activeView === 'admin-dashboard' ? 'active' : ''}`} onClick={() => navigate('admin-dashboard')}>
                 <LayoutDashboard size={16}/> Dashboard
               </div>
-              <div className={`nav-item ${activeView === 'admin-users' ? 'active' : ''}`} onClick={() => { navigate('admin-users'); loadUsersData(); }}>
+              <div className={`nav-item ${activeView === 'admin-users' ? 'active' : ''}`} onClick={() => { navigate('admin-users'); if (typeof loadUsersData === 'function') loadUsersData(); }}>
                 <Users size={16}/> Users
               </div>
               <div className={`nav-item ${activeView === 'admin-places' ? 'active' : ''}`} onClick={() => navigate('admin-places')}>
@@ -1543,6 +2003,9 @@ function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin
               </div>
               <div className={`nav-item ${activeView === 'admin-bookings' ? 'active' : ''}`} onClick={() => { navigate('admin-bookings'); loadAllBookingsData(); }}>
                 <Briefcase size={16}/> Bookings
+              </div>
+              <div className={`nav-item ${activeView === 'admin-revenue' ? 'active' : ''}`} onClick={() => { navigate('admin-revenue'); if (loadAdminRevenueData) loadAdminRevenueData(); }}>
+                <TrendingUp size={16}/> Revenue
               </div>
               <div className="nav-divider"></div>
               <div className="nav-item" onClick={() => navigate('explore')}><Globe size={16}/> View Site</div>
@@ -1635,7 +2098,7 @@ function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin
                     <LayoutDashboard size={19}/> Dashboard
                   </div>
                   <div className={`mobile-nav-item ${activeView === 'admin-users' ? 'active' : ''}`}
-                    onClick={() => handleNavClick(() => navigate('admin-users'))}>
+                    onClick={() => handleNavClick(() => { navigate('admin-users'); if (typeof loadUsersData === 'function') loadUsersData(); })}>
                     <Users size={19}/> Users
                   </div>
                   <div className={`mobile-nav-item ${activeView === 'admin-places' ? 'active' : ''}`}
@@ -1645,6 +2108,10 @@ function NavBar({ currentUser, activeView, navigate, navigateUser, navigateAdmin
                   <div className={`mobile-nav-item ${activeView === 'admin-bookings' ? 'active' : ''}`}
                     onClick={() => handleNavClick(() => { navigate('admin-bookings'); loadAllBookingsData(); })}>
                     <Briefcase size={19}/> Bookings
+                  </div>
+                  <div className={`mobile-nav-item ${activeView === 'admin-revenue' ? 'active' : ''}`}
+                    onClick={() => handleNavClick(() => { navigate('admin-revenue'); if (loadAdminRevenueData) loadAdminRevenueData(); })}>
+                    <TrendingUp size={19}/> Revenue Analytics
                   </div>
                   <div className={`mobile-nav-item ${activeView === 'admin-offers' ? 'active' : ''}`}
                     onClick={() => handleNavClick(() => { navigate('admin-offers'); loadOffersData(); })}>
@@ -1974,6 +2441,346 @@ function ToastContainer({ toasts }) {
           <span>{t.message}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function AdminRevenueSection({
+  revenueFilter,
+  setRevenueFilter,
+  customStartDate,
+  setCustomStartDate,
+  customEndDate,
+  setCustomEndDate,
+  revenueKpis,
+  revenueTransactions,
+  revenueRefunds,
+  revenueTab,
+  setRevenueTab,
+  revenueLoading,
+  loadAdminRevenueData
+}) {
+  return (
+    <div className="admin-section" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div className="admin-section-header">
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <TrendingUp size={20} color="var(--primary)" />
+            <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.25rem', fontWeight: 800 }}>
+              Payment-Based Revenue & Refund Analytics
+            </h3>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+            Calculated strictly from verified Razorpay payments (Gross Revenue) minus completed refunds (Net Revenue).
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => loadAdminRevenueData()}
+          disabled={revenueLoading}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        >
+          <RefreshCw size={14} className={revenueLoading ? 'spin' : ''} />
+          {revenueLoading ? 'Updating...' : 'Refresh Data'}
+        </button>
+      </div>
+
+      {/* Date Filter Bar */}
+      <div className="revenue-filter-bar">
+        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-medium)', marginRight: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <CalendarRange size={15} /> Period:
+        </span>
+        {[
+          { key: 'all', label: 'All Time' },
+          { key: 'today', label: 'Today' },
+          { key: 'week', label: 'This Week' },
+          { key: 'month', label: 'This Month' },
+          { key: 'year', label: 'This Year' },
+          { key: 'custom', label: 'Custom Range' },
+        ].map(f => (
+          <button
+            key={f.key}
+            type="button"
+            className={`date-pill ${revenueFilter === f.key ? 'active' : ''}`}
+            onClick={() => {
+              setRevenueFilter(f.key);
+              if (f.key !== 'custom') loadAdminRevenueData(f.key);
+            }}
+          >
+            {f.label}
+          </button>
+        ))}
+
+        {revenueFilter === 'custom' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', flexWrap: 'wrap' }}>
+            <input
+              type="date"
+              className="input-field"
+              style={{ padding: '6px 10px', fontSize: '0.8rem', width: 'auto' }}
+              value={customStartDate}
+              onChange={e => setCustomStartDate(e.target.value)}
+            />
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>to</span>
+            <input
+              type="date"
+              className="input-field"
+              style={{ padding: '6px 10px', fontSize: '0.8rem', width: 'auto' }}
+              value={customEndDate}
+              onChange={e => setCustomEndDate(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+              onClick={() => loadAdminRevenueData('custom', customStartDate, customEndDate)}
+            >
+              Apply Filter
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 9 KPI Metric Cards */}
+      <div className="revenue-kpi-grid">
+        {/* 1. Gross Revenue */}
+        <div className="revenue-kpi-card highlight-gross">
+          <div>
+            <div className="metric-label" style={{ color: 'var(--primary)' }}>1. Gross Revenue</div>
+            <div className="metric-value" style={{ color: 'var(--primary)', fontSize: '1.75rem' }}>
+              ₹{(revenueKpis?.grossRevenue || 0).toLocaleString()}
+            </div>
+          </div>
+          <div className="metric-subtext">Verified successful payments</div>
+        </div>
+
+        {/* 2. Total Refunds */}
+        <div className="revenue-kpi-card highlight-refund">
+          <div>
+            <div className="metric-label" style={{ color: 'var(--error)' }}>2. Total Refunds</div>
+            <div className="metric-value" style={{ color: 'var(--error)', fontSize: '1.75rem' }}>
+              ₹{(revenueKpis?.totalRefunds || 0).toLocaleString()}
+            </div>
+          </div>
+          <div className="metric-subtext">Completed refunds processed</div>
+        </div>
+
+        {/* 3. Net Revenue */}
+        <div className="revenue-kpi-card highlight-net">
+          <div>
+            <div className="metric-label" style={{ color: '#008080' }}>3. Net Revenue</div>
+            <div className="metric-value" style={{ color: '#008080', fontSize: '1.75rem' }}>
+              ₹{(revenueKpis?.netRevenue || 0).toLocaleString()}
+            </div>
+          </div>
+          <div className="metric-subtext">Formula: Gross − Completed Refunds</div>
+        </div>
+
+        {/* 4. Successful Payments */}
+        <div className="revenue-kpi-card">
+          <div>
+            <div className="metric-label">4. Successful Payments</div>
+            <div className="metric-value">{revenueKpis?.successfulPayments || 0}</div>
+          </div>
+          <div className="metric-subtext">Gateway verified transactions</div>
+        </div>
+
+        {/* 5. Pending Payments */}
+        <div className="revenue-kpi-card">
+          <div>
+            <div className="metric-label">5. Pending Payments</div>
+            <div className="metric-value" style={{ color: '#856404' }}>{revenueKpis?.pendingPayments || 0}</div>
+          </div>
+          <div className="metric-subtext">Reservations awaiting checkout</div>
+        </div>
+
+        {/* 6. Failed Payments */}
+        <div className="revenue-kpi-card">
+          <div>
+            <div className="metric-label">6. Failed Payments</div>
+            <div className="metric-value" style={{ color: 'var(--error)' }}>{revenueKpis?.failedPayments || 0}</div>
+          </div>
+          <div className="metric-subtext">Declined or signature error</div>
+        </div>
+
+        {/* 7. Cancelled Bookings */}
+        <div className="revenue-kpi-card">
+          <div>
+            <div className="metric-label">7. Cancelled Bookings</div>
+            <div className="metric-value">{revenueKpis?.cancelledBookings || 0}</div>
+          </div>
+          <div className="metric-subtext">Total tours cancelled</div>
+        </div>
+
+        {/* 8. Refunded Bookings */}
+        <div className="revenue-kpi-card">
+          <div>
+            <div className="metric-label">8. Refunded Bookings</div>
+            <div className="metric-value">{revenueKpis?.refundedBookings || 0}</div>
+          </div>
+          <div className="metric-subtext">Completed refund count</div>
+        </div>
+
+        {/* 9. Total Refund Pending Amount */}
+        <div className="revenue-kpi-card">
+          <div>
+            <div className="metric-label">9. Pending Refunds</div>
+            <div className="metric-value" style={{ color: '#B78103' }}>
+              ₹{(revenueKpis?.totalRefundPendingAmount || 0).toLocaleString()}
+            </div>
+          </div>
+          <div className="metric-subtext">Pending gateway confirmation</div>
+        </div>
+      </div>
+
+      {/* Tables Subtabs */}
+      <div style={{ marginTop: '10px' }}>
+        <div className="admin-tabs-bar">
+          <button
+            type="button"
+            className={`admin-tab-btn ${revenueTab === 'kpis' ? 'active' : ''}`}
+            onClick={() => setRevenueTab('kpis')}
+          >
+            <Receipt size={16} /> Verified Transactions ({revenueTransactions.length})
+          </button>
+          <button
+            type="button"
+            className={`admin-tab-btn ${revenueTab === 'refunds' ? 'active' : ''}`}
+            onClick={() => setRevenueTab('refunds')}
+          >
+            <RotateCcw size={16} /> Processed Refunds ({revenueRefunds.length})
+          </button>
+        </div>
+
+        {/* Tab 1: Verified Transactions */}
+        {revenueTab === 'kpis' && (
+          <div>
+            {revenueTransactions.length === 0 ? (
+              <div className="empty-state" style={{ padding: '30px' }}>
+                <Receipt size={36} style={{ color: 'var(--text-light)', marginBottom: '8px' }} />
+                <p>No verified transactions found for this period.</p>
+              </div>
+            ) : (
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Payment ID</th>
+                      <th>Customer</th>
+                      <th>Destination</th>
+                      <th>Amount Paid</th>
+                      <th>Payment Date</th>
+                      <th>Razorpay Payment ID</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {revenueTransactions.map(tx => (
+                      <tr key={tx.id || tx.paymentId}>
+                        <td>
+                          <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, color: 'var(--primary)', fontSize: '0.8rem' }}>
+                            {tx.paymentId}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{tx.customerName}</div>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{tx.customerEmail}</div>
+                        </td>
+                        <td>{tx.destinationName}</td>
+                        <td>
+                          <strong style={{ color: 'var(--primary)' }}>₹{tx.amount?.toLocaleString()}</strong>
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>
+                          {tx.paymentDate ? new Date(tx.paymentDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                        </td>
+                        <td>
+                          <code style={{ fontSize: '0.78rem', background: 'var(--cream)', padding: '2px 6px', borderRadius: '4px' }}>
+                            {tx.razorpayPaymentId}
+                          </code>
+                        </td>
+                        <td>
+                          <span className={`status-badge status-${(tx.paymentStatus || 'success').toLowerCase()}`}>
+                            {tx.paymentStatus}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 2: Processed Refunds */}
+        {revenueTab === 'refunds' && (
+          <div>
+            {revenueRefunds.length === 0 ? (
+              <div className="empty-state" style={{ padding: '30px' }}>
+                <RotateCcw size={36} style={{ color: 'var(--text-light)', marginBottom: '8px' }} />
+                <p>No refund records found for this period.</p>
+              </div>
+            ) : (
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Refund ID</th>
+                      <th>Customer</th>
+                      <th>Destination</th>
+                      <th>Refund Amount</th>
+                      <th>Policy Applied</th>
+                      <th>Razorpay Refund ID</th>
+                      <th>Status</th>
+                      <th>Date Initiated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {revenueRefunds.map(rf => (
+                      <tr key={rf.id || rf.refundId}>
+                        <td>
+                          <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, color: 'var(--error)', fontSize: '0.8rem' }}>
+                            {rf.refundId}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{rf.customerName}</div>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{rf.customerEmail}</div>
+                        </td>
+                        <td>{rf.destinationName}</td>
+                        <td>
+                          <strong style={{ color: 'var(--error)' }}>₹{rf.refundAmount?.toLocaleString()}</strong>
+                        </td>
+                        <td>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                            {rf.cancellationPolicy?.policyApplied || `${rf.cancellationPolicy?.refundPercentage || 0}% Refund`}
+                          </div>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                            {rf.cancellationPolicy?.daysBeforeTravel != null ? `${rf.cancellationPolicy.daysBeforeTravel}d before trip` : ''}
+                          </div>
+                        </td>
+                        <td>
+                          <code style={{ fontSize: '0.78rem', background: 'var(--cream)', padding: '2px 6px', borderRadius: '4px' }}>
+                            {rf.razorpayRefundId}
+                          </code>
+                        </td>
+                        <td>
+                          <span className={`status-badge status-${(rf.refundStatus || 'refunded').toLowerCase()}`}>
+                            {rf.refundStatus}
+                          </span>
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>
+                          {rf.refundInitiatedDate ? new Date(rf.refundInitiatedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

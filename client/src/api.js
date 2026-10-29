@@ -65,7 +65,7 @@ const authHeaders = () => {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   if (user) {
-    headers['x-user-id'] = user.id;
+    headers['x-user-id'] = user.id || user._id;
     headers['x-user-role'] = user.role;
   }
   return headers;
@@ -210,6 +210,141 @@ export const updateBookingStatus = async (id, status) => {
   }
 };
 
+export const fetchCancellationPolicy = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/bookings/policy`, defaultOptions());
+    return await parseResponse(res, 'Failed to fetch cancellation policy');
+  } catch (err) {
+    console.error('API Error (fetchCancellationPolicy):', err);
+    throw err;
+  }
+};
+
+export const fetchBookingById = async (id) => {
+  try {
+    const res = await fetch(`${API_BASE}/bookings/${id}`, defaultOptions({
+      headers: authHeaders(),
+    }));
+    return await parseResponse(res, 'Failed to fetch booking details');
+  } catch (err) {
+    console.error('API Error (fetchBookingById):', err);
+    throw err;
+  }
+};
+
+export const cancelBookingApi = async (bookingId, reason = '') => {
+  try {
+    const res = await fetch(`${API_BASE}/bookings/${bookingId}/cancel`, defaultOptions({
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ reason }),
+    }));
+    return await parseResponse(res, 'Failed to cancel booking');
+  } catch (err) {
+    console.error('API Error (cancelBookingApi):', err);
+    throw err;
+  }
+};
+
+// =============================================
+// PAYMENT & REFUND API (RAZORPAY)
+// =============================================
+
+export const createPaymentOrderApi = async (bookingId) => {
+  try {
+    const res = await fetch(`${API_BASE}/payments/create-order`, defaultOptions({
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ bookingId }),
+    }));
+    return await parseResponse(res, 'Failed to create payment order');
+  } catch (err) {
+    console.error('API Error (createPaymentOrderApi):', err);
+    throw err;
+  }
+};
+
+export const verifyPaymentApi = async (paymentData) => {
+  try {
+    const res = await fetch(`${API_BASE}/payments/verify`, defaultOptions({
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(paymentData),
+    }));
+    return await parseResponse(res, 'Payment verification failed');
+  } catch (err) {
+    console.error('API Error (verifyPaymentApi):', err);
+    throw err;
+  }
+};
+
+export const fetchRefundStatusApi = async (bookingId) => {
+  try {
+    const res = await fetch(`${API_BASE}/payments/refund-status/${bookingId}`, defaultOptions({
+      headers: authHeaders(),
+    }));
+    return await parseResponse(res, 'Failed to fetch refund status');
+  } catch (err) {
+    console.error('API Error (fetchRefundStatusApi):', err);
+    throw err;
+  }
+};
+
+// =============================================
+// ADMIN REVENUE & ANALYTICS API
+// =============================================
+
+export const fetchAdminRevenueApi = async (params = {}) => {
+  try {
+    const query = new URLSearchParams();
+    if (params.filter) query.append('filter', params.filter);
+    if (params.startDate) query.append('startDate', params.startDate);
+    if (params.endDate) query.append('endDate', params.endDate);
+
+    const res = await fetch(`${API_BASE}/admin/revenue?${query.toString()}`, defaultOptions({
+      headers: authHeaders(),
+    }));
+    return await parseResponse(res, 'Failed to fetch revenue analytics');
+  } catch (err) {
+    console.error('API Error (fetchAdminRevenueApi):', err);
+    throw err;
+  }
+};
+
+export const fetchAdminTransactionsApi = async (params = {}) => {
+  try {
+    const query = new URLSearchParams();
+    if (params.filter) query.append('filter', params.filter);
+    if (params.startDate) query.append('startDate', params.startDate);
+    if (params.endDate) query.append('endDate', params.endDate);
+
+    const res = await fetch(`${API_BASE}/admin/revenue/transactions?${query.toString()}`, defaultOptions({
+      headers: authHeaders(),
+    }));
+    return await parseResponse(res, 'Failed to fetch revenue transactions');
+  } catch (err) {
+    console.error('API Error (fetchAdminTransactionsApi):', err);
+    throw err;
+  }
+};
+
+export const fetchAdminRefundsApi = async (params = {}) => {
+  try {
+    const query = new URLSearchParams();
+    if (params.filter) query.append('filter', params.filter);
+    if (params.startDate) query.append('startDate', params.startDate);
+    if (params.endDate) query.append('endDate', params.endDate);
+
+    const res = await fetch(`${API_BASE}/admin/revenue/refunds?${query.toString()}`, defaultOptions({
+      headers: authHeaders(),
+    }));
+    return await parseResponse(res, 'Failed to fetch refund records');
+  } catch (err) {
+    console.error('API Error (fetchAdminRefundsApi):', err);
+    throw err;
+  }
+};
+
 // =============================================
 // AUTH API
 // =============================================
@@ -262,7 +397,9 @@ export const logoutUser = async () => {
 
 export const fetchMe = async () => {
   try {
-    const res = await fetch(`${API_BASE}/auth/me`, defaultOptions());
+    const res = await fetch(`${API_BASE}/auth/me`, defaultOptions({
+      headers: authHeaders()
+    }));
     return await parseResponse(res, 'Failed to fetch session');
   } catch (err) {
     return null;
