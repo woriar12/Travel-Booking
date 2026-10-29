@@ -219,7 +219,7 @@ const verifyPayment = async (req, res) => {
       data: {
         bookingId: booking._id.toString(),
         paymentId: paymentDoc.paymentId,
-        razorpayPaymentId,
+        razorpayPaymentId: razorpay_payment_id,
         amountPaid: booking.totalPrice,
         bookingStatus: 'CONFIRMED',
         paymentStatus: 'SUCCESS'

@@ -498,12 +498,18 @@ export default function App() {
         throw new Error('Failed to create payment order');
       }
 
+      // Use a validated public HTTPS image for Razorpay Checkout logo (never localhost or non-secure URLs)
+      const safeImageUrl = (booking.destination?.image && typeof booking.destination.image === 'string' && booking.destination.image.startsWith('https://'))
+        ? booking.destination.image
+        : 'https://images.unsplash.com/photo-1545389336-cf090694435e?auto=format&fit=crop&w=128&q=80';
+
       const options = {
         key: orderData.keyId,
         amount: orderData.amount,
         currency: orderData.currency || 'INR',
         name: 'NatureTrails 🌿',
         description: `Tour Reservation - ${booking.destination?.name || 'Nature Experience'}`,
+        image: safeImageUrl,
         order_id: orderData.orderId,
         prefill: {
           name: booking.userName || currentUser?.name || 'Traveler',
@@ -600,12 +606,11 @@ export default function App() {
       const bId = cancellingBooking.id || cancellingBooking._id;
       const res = await cancelBookingApi(bId, cancellationReason);
       if (res && res.success) {
-        const refundAmt = res.refundAmount || res.data?.refundAmount || 0;
-        const refundPct = res.refundPercentage || res.data?.refundPercentage || 0;
+        const refundAmt = res.refundAmount || res.data?.refundAmount || res.refund?.refundAmount || 0;
         if (refundAmt > 0) {
-          addToast(`Booking cancelled. Refund of ₹${refundAmt.toLocaleString()} (${refundPct}%) initiated.`, 'success');
+          addToast(`Booking cancelled. Refund of ₹${refundAmt.toLocaleString()} initiated (₹100 cancellation fee deducted).`, 'success');
         } else {
-          addToast('Booking cancelled. Per policy (within 72 hours), ₹0 refund applies.', 'info');
+          addToast('Booking cancelled successfully.', 'info');
         }
         setCancellingBooking(null);
         loadAllBookingsData();
@@ -1783,11 +1788,11 @@ export default function App() {
                           )}
                           {bk.refundAmount > 0 ? (
                             <div style={{ color: 'var(--success)', fontWeight: 700 }}>
-                              ✓ Refund Amount: ₹{bk.refundAmount.toLocaleString()} ({bk.refundPercentage || 0}% policy applied) — Status: {bk.refundStatus}
+                              ✓ Refund Amount: ₹{bk.refundAmount.toLocaleString()} (₹100 cancellation fee deducted) — Status: {bk.refundStatus}
                             </div>
                           ) : (
                             <div style={{ color: 'var(--text-muted)' }}>
-                              Non-refundable as per policy (cancelled within 72 hours of travel).
+                              Booking cancelled (No refundable amount).
                             </div>
                           )}
                         </div>
@@ -1863,31 +1868,27 @@ export default function App() {
               <div style={{ fontWeight: 700, fontSize: '0.88rem', marginBottom: '10px', color: 'var(--charcoal)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <FileText size={16} /> Cancellation & Refund Policy
               </div>
-              <div className={`policy-tier-row ${cancellationModalEstimate?.refundPercentage === 90 ? 'active' : ''}`}>
-                <span>7 or more days before trip:</span>
-                <strong>90% Refund</strong>
+              <div className="policy-tier-row active">
+                <span>Cancellation Fee:</span>
+                <strong style={{ color: 'var(--error)' }}>₹100 Deducted</strong>
               </div>
-              <div className={`policy-tier-row ${cancellationModalEstimate?.refundPercentage === 50 ? 'active' : ''}`}>
-                <span>3 to 6 days before trip:</span>
-                <strong>50% Refund</strong>
-              </div>
-              <div className={`policy-tier-row ${cancellationModalEstimate?.refundPercentage === 0 ? 'active' : ''}`}>
-                <span>Within 72 hours of trip:</span>
-                <strong>No Refund (0%)</strong>
+              <div className="policy-tier-row" style={{ color: 'var(--success)', fontWeight: 600 }}>
+                <span>Remaining Tour Amount:</span>
+                <strong>100% Refunded</strong>
               </div>
 
               {cancellationModalEstimate && (
                 <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                      {cancellationModalEstimate.daysBeforeTrip} days ({cancellationModalEstimate.hoursBeforeTrip} hrs) before trip
+                      Total Paid: ₹{cancellingBooking.totalPrice?.toLocaleString()} - ₹100 Cancellation Fee
                     </div>
                     <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--primary)' }}>
                       {cancellationModalEstimate.policyApplied}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Estimated Refund</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Refund To Account</div>
                     <div style={{ fontSize: '1.25rem', fontWeight: 800, color: cancellationModalEstimate.refundAmount > 0 ? 'var(--success)' : 'var(--error)' }}>
                       ₹{cancellationModalEstimate.refundAmount.toLocaleString()}
                     </div>

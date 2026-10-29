@@ -148,6 +148,7 @@ const server = app.listen(PORT, () => {
   console.log(`🌍 Base URL: http://localhost:${PORT}`);
   console.log(`🗄️ Database: MongoDB (naturetrails)`);
   console.log(`🔐 Auth: Server Session (HttpOnly Cookie) & JWT Token`);
+  console.log(`💳 Razorpay Gateway: Configured (${process.env.RAZORPAY_KEY_ID})`);
   console.log(`==================================================\n`);
 });
 

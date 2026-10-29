@@ -1,8 +1,12 @@
 const crypto = require('crypto');
 
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_naturetrails2026';
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || 'naturetrails_razorpay_secret_2026';
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_Ttn4wuSb5NUWBE';
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || 'cxk6eU3yFSmpmabrCJev19C0';
 const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || 'naturetrails_webhook_secret_2026';
+
+const getKeyId = () => process.env.RAZORPAY_KEY_ID || RAZORPAY_KEY_ID;
+const getKeySecret = () => process.env.RAZORPAY_KEY_SECRET || RAZORPAY_KEY_SECRET;
+const getWebhookSecret = () => process.env.RAZORPAY_WEBHOOK_SECRET || RAZORPAY_WEBHOOK_SECRET;
 
 /**
  * Creates a Razorpay Order
@@ -13,13 +17,15 @@ const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || 'naturetr
  */
 const createOrder = async (amountInRupees, receiptId, notes = {}) => {
   const amountInPaise = Math.round(Number(amountInRupees) * 100);
+  const keyId = getKeyId();
+  const keySecret = getKeySecret();
 
   // If Razorpay SDK is available
   try {
     const Razorpay = require('razorpay');
     const instance = new Razorpay({
-      key_id: RAZORPAY_KEY_ID,
-      key_secret: RAZORPAY_KEY_SECRET,
+      key_id: keyId,
+      key_secret: keySecret,
     });
     const order = await instance.orders.create({
       amount: amountInPaise,
@@ -32,12 +38,12 @@ const createOrder = async (amountInRupees, receiptId, notes = {}) => {
       orderId: order.id,
       amount: order.amount,
       currency: order.currency,
-      keyId: RAZORPAY_KEY_ID,
+      keyId: keyId,
     };
   } catch (sdkErr) {
     // Fallback: Direct API call using fetch
     try {
-      const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString('base64');
+      const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
       const res = await fetch('https://api.razorpay.com/v1/orders', {
         method: 'POST',
         headers: {
@@ -59,7 +65,7 @@ const createOrder = async (amountInRupees, receiptId, notes = {}) => {
           orderId: data.id,
           amount: data.amount,
           currency: data.currency,
-          keyId: RAZORPAY_KEY_ID,
+          keyId: keyId,
         };
       }
     } catch (fetchErr) {
@@ -73,7 +79,7 @@ const createOrder = async (amountInRupees, receiptId, notes = {}) => {
       orderId: simulatedOrderId,
       amount: amountInPaise,
       currency: 'INR',
-      keyId: RAZORPAY_KEY_ID,
+      keyId: keyId,
       isSimulated: true,
     };
   }
@@ -96,7 +102,7 @@ const verifyPaymentSignature = (orderId, paymentId, signature) => {
 
   try {
     const expectedSignature = crypto
-      .createHmac('sha256', RAZORPAY_KEY_SECRET)
+      .createHmac('sha256', getKeySecret())
       .update(`${orderId}|${paymentId}`)
       .digest('hex');
 
@@ -136,8 +142,8 @@ const initiateRefund = async (paymentId, refundAmountInRupees, notes = {}) => {
   try {
     const Razorpay = require('razorpay');
     const instance = new Razorpay({
-      key_id: RAZORPAY_KEY_ID,
-      key_secret: RAZORPAY_KEY_SECRET,
+      key_id: getKeyId(),
+      key_secret: getKeySecret(),
     });
     const refund = await instance.payments.refund(paymentId, {
       amount: amountInPaise,
@@ -154,7 +160,7 @@ const initiateRefund = async (paymentId, refundAmountInRupees, notes = {}) => {
   } catch (sdkErr) {
     // Fallback: Direct API call via fetch
     try {
-      const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString('base64');
+      const auth = Buffer.from(`${getKeyId()}:${getKeySecret()}`).toString('base64');
       const res = await fetch(`https://api.razorpay.com/v1/payments/${paymentId}/refund`, {
         method: 'POST',
         headers: {

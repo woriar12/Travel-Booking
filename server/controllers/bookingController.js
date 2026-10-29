@@ -391,9 +391,11 @@ const cancelBooking = async (req, res) => {
     res.status(200).json({
       success: true,
       message: calculatedRefundAmount > 0
-        ? `Booking successfully cancelled. Refund of ₹${calculatedRefundAmount.toLocaleString()} (${refundPercentage}%) initiated.`
+        ? `Booking successfully cancelled. Refund of ₹${calculatedRefundAmount.toLocaleString()} initiated (₹100 cancellation fee deducted).`
         : 'Booking successfully cancelled.',
       data: mapBooking(booking),
+      refundAmount: calculatedRefundAmount,
+      cancellationFee: isPaidBooking ? (evalResult.cancellationFee || 100) : 0,
       refund: refundDoc,
       policy: evalResult
     });
